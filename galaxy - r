@@ -1,0 +1,66 @@
+########################
+## Load Packages & Data ## 
+########################
+library(readr)
+library(doParallel)
+library(plotly)
+library(caret)
+library(C50)
+library(RMariaDB)
+library(RMySQL)
+library(ggplot2)
+library(corrplot)
+
+
+## Import data
+galaxydf <- read.csv("galaxy_smallmatrix_labeled_9d.csv")
+
+########################
+## parallel processing ## 
+########################
+
+# Find how many cores are on your machine
+detectCores() # Result = 4
+# Create Cluster with desired number of cores. Don't use them all! Your computer is running other processes. 
+cl <- makeCluster(2)
+# Register Cluster
+registerDoParallel(cl)
+# Confirm how many cores are now "assigned" to R and RStudio
+getDoParWorkers() # Result 2 
+# Stop Cluster. After peorming your tasks, stop your cluster. 
+stopCluster(cl)
+
+####################
+## Pre-processing ## 
+####################
+
+## Inspect the data types
+str(galaxydf)
+
+# galaxy df contains -- 12,911 observations & -- 59 variables
+
+# Min, Med, Mean, Max
+summary(galaxydf)
+
+#List your attributes within your data set.
+attributes(galaxydf)
+
+#Names your attributes within your data set
+names(galaxydf) 
+
+#Will print out the instances within that particular column in your data set.
+galaxydf$galaxysentiment
+
+# Histogram
+plot_ly(galaxydf, x= ~galaxydf$galaxysentiment, type='histogram')
+
+# KEY: 
+# 0: very negative
+# 1: negative
+# 2: somewhat negative
+# 3: somewhat positive
+# 4: positive
+# 5: very positive
+
+# Missing values? 
+is.na(galaxydf) #omitted 0 rows
