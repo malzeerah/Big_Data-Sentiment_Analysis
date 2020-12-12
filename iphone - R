@@ -5,16 +5,14 @@ library(readr)
 library(doParallel)
 library(plotly)
 library(caret)
-library(C50)
-library(RMariaDB)
-library(RMySQL)
 library(ggplot2)
 library(corrplot)
 
 
 ## Import data
-iphonedf <- read.csv("iphone_smallmatrix_labeled_8d.csv")
-galaxydf <- read.csv("galaxy_smallmatrix_labeled_9d.csv")
+iphone_small <- read.csv("iphone_smallmatrix_labeled_8d.csv")
+iphone_large <- read.csv("LargeMatrix.csv")
+
 
 ########################
 ## parallel processing ## 
@@ -31,36 +29,43 @@ getDoParWorkers() # Result 2
 # Stop Cluster. After peorming your tasks, stop your cluster. 
 stopCluster(cl)
 
-####################
-## Pre-processing ## 
-####################
+#############################
+## Pre-processing/Cleaning ## 
+#############################
 
-## Inspect the data types
-str(iphonedf)
-str(galaxydf)
-
+## Inspect data types
+str(iphone_small)
 # Iphone df contains -- 12,973 observations & -- 59 variables
-# galaxy df contains -- 12,911 observations & -- 59 variables
+
+# Convert iphonesentiment to factor (y output)
+iphone_small$iphonesentiment <- as.factor(iphone_small$iphonesentiment)
+
+#Verify Datatypes 
+str(iphone_small$iphonesentiment)
+# Factor w/ 6 levels
 
 # Min, Med, Mean, Max
-summary(iphonedf)
-summary(galaxydf)
+summary(iphone_small)
 
 #List your attributes within your data set.
-attributes(iphonedf)
-attributes(galaxydf)
+attributes(iphone_small)
 
 #Names your attributes within your data set
-names(iphonedf) 
-names(galaxydf) 
+names(iphone_small) 
 
 #Will print out the instances within that particular column in your data set.
-iphonedf$iphonesentiment 
-galaxydf$galaxysentiment
+iphone_small$iphonesentiment 
+
+
+# Missing values? 
+is.na(iphone_small) #omitted 0 rows
+
+##############
+##   EDA    ##
+##############
 
 # Histogram
-plot_ly(iphonedf, x= ~iphonedf$iphonesentiment, type='histogram')
-plot_ly(galaxydf, x= ~galaxydf$galaxysentiment, type='histogram')
+plot_ly(iphone_small, x= ~iphone_small$iphonesentiment, type='histogram')
 
 # KEY: 
 # 0: very negative
@@ -70,23 +75,17 @@ plot_ly(galaxydf, x= ~galaxydf$galaxysentiment, type='histogram')
 # 4: positive
 # 5: very positive
 
-# Missing values? 
-is.na(iphonedf) #omitted 0 rows
-is.na(galaxydf) #omitted 0 rows
 
-# Convert iphonesentiment to factor
-iphonedf$ColumnName<-as.factor(iphonedf$iphonesentiment)
+################
+##    Model   ##
+################
 
-# Rename new factor column
-names(iphonedf) == "ColumnName" <- "iphonesent"
+# model C5.0
+# model rf
+# model SVM
+# model kknn
+# model gmb
 
-#Verify Datatypes 
-str(ready_existing_Data)
-str(ready_new_Data)
+set.seed(123)
 
-#ascertain the correlation between all of the features.
-corrData <- cor(iphonedf)
-corrData
-corrplot(corrData)
 
-options(max.print=1000000)
