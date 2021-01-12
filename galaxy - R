@@ -1,19 +1,22 @@
 ########################
 ## Load Packages & Data ## 
 ########################
+#install.packages("kknn")
 library(readr)
 library(doParallel)
 library(plotly)
 library(caret)
-library(C50)
-library(RMariaDB)
-library(RMySQL)
 library(ggplot2)
 library(corrplot)
+library(kknn)
+library(e1071)
+library(dplyr)
 
 
 ## Import data
-galaxydf <- read.csv("galaxy_smallmatrix_labeled_9d.csv")
+galaxy_small <- read.csv("galaxy_smallmatrix_labeled_9d.csv")
+galaxy_large <- read.csv("LargeMatrix.csv")
+
 
 ########################
 ## parallel processing ## 
@@ -27,32 +30,34 @@ cl <- makeCluster(2)
 registerDoParallel(cl)
 # Confirm how many cores are now "assigned" to R and RStudio
 getDoParWorkers() # Result 2 
-# Stop Cluster. After peorming your tasks, stop your cluster. 
+# Stop Cluster. After performing your tasks, stop your cluster. 
 stopCluster(cl)
 
-####################
-## Pre-processing ## 
-####################
+##############
+##   EDA    ##
+##############
 
-## Inspect the data types
-str(galaxydf)
-
+## Inspect data types
+str(galaxy_small)
 # galaxy df contains -- 12,911 observations & -- 59 variables
 
 # Min, Med, Mean, Max
-summary(galaxydf)
+summary(galaxy_small)
 
 #List your attributes within your data set.
-attributes(galaxydf)
+attributes(galaxy_small)
 
 #Names your attributes within your data set
-names(galaxydf) 
+names(galaxy_small) 
 
 #Will print out the instances within that particular column in your data set.
-galaxydf$galaxysentiment
+galaxy_small$galaxysentiment 
+
+# Missing values? 
+is.na(galaxy_small) #omitted 0 rows
 
 # Histogram
-plot_ly(galaxydf, x= ~galaxydf$galaxysentiment, type='histogram')
+plot_ly(galaxy_small, x= ~galaxy_small$galaxysentiment, type='histogram')
 
 # KEY: 
 # 0: very negative
@@ -62,5 +67,824 @@ plot_ly(galaxydf, x= ~galaxydf$galaxysentiment, type='histogram')
 # 4: positive
 # 5: very positive
 
-# Missing values? 
-is.na(galaxydf) #omitted 0 rows
+
+###############################
+## Model - Original Data Set  ##
+###############################
+
+#  ----- Make output Factor  -----
+# Convert galaxysentiment to factor (y output)
+galaxy_small$galaxysentiment <- as.factor(galaxy_small$galaxysentiment)
+
+#Verify Datatypes 
+str(galaxy_small$galaxysentiment)
+# Factor w/ 6 levels
+
+# -------- Configure standard seed & train, test split --------
+#set seed
+set.seed(123)
+
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(galaxy_small$galaxysentiment, p = .7, list = FALSE)
+training <- galaxy_small[inTraining,]
+testing <- galaxy_small[-inTraining,]
+
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
+# model C5.0
+# model rf
+# model SVM
+# model kknn
+
+# --------- C5.0 Model ---------
+#train 
+system.time(C5Fit <- train(galaxysentiment~., data = training, method = "C5.0", trControl=fitControl, tuneLength=2))
+# Train time = 1 min
+#training results
+C5Fit
+#model  winnow  trials  Accuracy   Kappa    
+#  rules  FALSE    1      0.7669282  0.5317926
+#  rules  FALSE   10      0.7602923  0.5187709
+#  rules   TRUE    1      0.7654897  0.5300025
+#  rules   TRUE   10      0.7596278  0.5181911
+#  tree   FALSE    1      0.7647155  0.5285894
+#  tree   FALSE   10      0.7596275  0.5192416
+#  tree    TRUE    1      0.7649363  0.5296031
+#  tree    TRUE   10      0.7590772  0.5194064   
+
+
+# ---------  C5.0 Predict --------- 
+C5pred <- predict(C5Fit, newdata = testing)
+postResample(C5pred, testing$galaxysentiment)
+#Accuracy     Kappa 
+#0.7675019 0.5322522 
+
+#Summarize prediction
+summary(C5pred)
+
+#0    1    2    3    4    5 
+#396    0   18  243  138 3076 
+
+# Create a confusion matrix from random forest predictions 
+cmC5 <- confusionMatrix(C5pred, testing$galaxysentiment) 
+cmC5
+
+
+# --------- rf Model ---------
+#train 
+system.time(rfFit <- train(galaxysentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 32 min
+
+#training results
+rfFit
+# mtry  Accuracy   Kappa    
+#   2    0.7053171  0.3571164
+#   8    0.7547655  0.4978974
+#  14    0.7673752  0.5339356
+#  20    0.7657170  0.5319777
+#  26    0.7652746  0.5322553
+#  33    0.7626202  0.5287066
+#  39    0.7608505  0.5266333
+#  45    0.7591899  0.5237048
+#  51    0.7567557  0.5202786
+#  58    0.7533304  0.5146650
+
+# --------- rf Predict --------- 
+rfpred <- predict(rfFit, newdata = testing)
+postResample(rfpred, testing$galaxysentiment)
+#Accuracy     Kappa 
+#.7706019 0.5384354 
+
+#Summarize prediction
+summary(rfpred)
+#0    1    2    3    4    5 
+#390    2   17  246  139 3077 
+
+# Create a confusion matrix from random forest predictions 
+cmRF <- confusionMatrix(rfpred, testing$galaxysentiment) 
+cmRF
+
+# --------- SVM Model ---------
+#train 
+system.time(svmFit <- train(galaxysentiment~., data = training, method = "svmLinear2", trControl=fitControl, tuneLength = 5))
+#Train time = 
+
+#training results
+svmFit
+# cost  Accuracy   Kappa    
+# 0.25  0.6953466  0.3472055
+# 0.50  0.7015408  0.3703529
+# 1.00  0.7033109  0.3776906
+# 2.00  0.7019845  0.3750321
+# 4.00  0.7016537  0.3746306
+
+
+# --------- SVM Predict --------- 
+svmpred <- predict(svmFit, newdata = testing)
+postResample(svmpred, testing$galaxysentiment)
+#Accuracy   Kappa 
+#0.6990442 0.3680638 
+
+
+# --------- KKNN Model ---------
+#train 
+system.time(KKNNFit <- train(galaxysentiment~., data = training, method = "kknn", trControl=fitControl, tuneLength = 5))
+#Train time = 4 min
+
+#training results
+KKNNFit
+# kmax  Accuracy   Kappa    
+#    5    0.6331098  0.3931060
+#    7    0.7057917  0.4651553
+#    9    0.7222341  0.4778153
+#   11    0.7476824  0.5052849
+#   13    0.7492302  0.5062797   
+
+
+#--------- KKNN Predict --------- 
+KKNNpred <- predict(KKNNFit, newdata = testing)
+postResample(KKNNpred, testing$galaxysentiment)
+#Accuracy     Kappa 
+#0.7605270 0.5214546 
+
+#########################
+## Model - galaxyNZV  ##
+########################
+
+#  ----- Feature Engineer NZV Dataset  -----
+#nearZeroVar() with saveMetrics = TRUE returns an object containing a table including: frequency ratio, percentage unique, zero variance and near zero variance 
+nzvMetrics <- nearZeroVar(galaxy_small, saveMetrics = TRUE)
+nzvMetrics
+
+# nearZeroVar() with saveMetrics = FALSE returns an vector 
+nzv <- nearZeroVar(galaxy_small, saveMetrics = FALSE) 
+nzv
+
+# create a new data set and remove near zero variance features
+galaxyNZV <- galaxy_small[,-nzv]
+str(galaxyNZV)
+
+#  ----- Make output Factor  -----
+# Convert galaxysentiment to factor (y output)
+galaxyNZV$galaxysentiment <- as.factor(galaxyNZV$galaxysentiment)
+
+#Verify Datatypes 
+str(galaxyNZV$galaxysentiment)
+# Factor w/ 6 levels
+
+# -------- Configure standard seed & train, test split --------
+#set seed
+set.seed(123)
+
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(galaxyNZV$galaxysentiment, p = .7, list = FALSE)
+training <- galaxyNZV[inTraining,]
+testing <- galaxyNZV[-inTraining,]
+
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
+
+# model C5.0
+# model rf
+# model SVM
+# model kknn
+
+#--------- C5.0 Model ---------
+#train 
+system.time(C5Fit_NZV <- train(galaxysentiment~., data = training, method = "C5.0", trControl=fitControl, tuneLength=2))
+# Train time =  1 min 
+
+#training results
+C5Fit_NZV
+# model  winnow  trials  Accuracy   Kappa    
+#  rules  FALSE    1      0.7538730  0.5006638
+#  rules  FALSE   10      0.7442545  0.4779826
+#  rules   TRUE    1      0.7530993  0.4992170
+#  rules   TRUE   10      0.7403827  0.4676068
+#  tree   FALSE    1      0.7533203  0.4998667
+#  tree   FALSE   10      0.7449139  0.4813643
+#  tree    TRUE    1      0.7526562  0.4984203
+#  tree    TRUE   10      0.7411563  0.4707663  
+
+
+# ---------  C5.0 Predict --------- 
+C5pred_NZV <- predict(C5Fit_NZV, newdata = testing)
+postResample(C5pred_NZV, testing$galaxysentiment)
+# Accuracy     Kappa 
+# 0.7514854 0.4936633 
+
+#Summarize prediction
+summary(C5pred_NZV)
+# 0    1    2    3    4    5 
+# 410    0    0  200  141 3120 
+
+# Create a confusion matrix from random forest predictions 
+cmC5_NZV <- confusionMatrix(C5pred_NZV, testing$galaxysentiment) 
+cmC5_NZV 
+
+# --------- rf Model ---------
+
+#train
+system.time(rfFit_NZV <- train(galaxysentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 6 min 
+
+#training results
+rfFit_NZV
+# mtry  Accuracy   Kappa    
+#   2    0.7560909  0.5033857
+#   3    0.7552054  0.5043631
+#   4    0.7549850  0.5054537
+#   5    0.7540990  0.5047171
+#   6    0.7514441  0.5005939
+#   7    0.7497850  0.4982792
+#   8    0.7491211  0.4974673
+#   9    0.7489009  0.4980107
+#  10    0.7474609  0.4959997
+#  11    0.7453633  0.4931230  
+
+# --------- rf Predict --------- 
+rfpred_NZV <- predict(rfFit_NZV, newdata = testing)
+postResample(rfpred_NZV, testing$galaxysentiment)
+#Accuracy     Kappa 
+# 0.7553604 0.4990007 
+
+#Summarize prediction
+summary(rfpred_NZV)
+#0    1    2    3    4    5 
+# 415    0    0  189  128 3139 
+
+# Create a confusion matrix from random forest predictions 
+cmC5_NZV <- confusionMatrix(rfpred_NZV, testing$iphonesentiment) 
+cmC5_NZV 
+
+# --------- SVM Model ---------
+#train
+system.time(svmFit_NZV <- train(galaxysentiment~., data = training, method = "svmLinear2", trControl=fitControl, tuneLength = ))
+#Train time = 2 min
+
+#training results
+svmFit_NZV
+# cost  Accuracy   Kappa    
+# 0.25  0.6805292  0.3128668
+# 0.50  0.6804184  0.3132399
+# 1.00  0.6817446  0.3159422 
+
+# --------- SVM Predict --------- 
+svmpred_NZV <- predict(svmFit_NZV, newdata = testing)
+postResample(svmpred_NZV, testing$galaxysentiment)
+#Accuracy     Kappa 
+#0.6794110 0.3083141
+
+# --------- KKNN Model ---------
+#train
+system.time(KKNNFit_NZV <- train(galaxysentiment~., data = training, method = "kknn", trControl=fitControl, tuneLength = 10))
+#Train time = 5 min
+
+#training results
+KKNNFit_NZV
+# kmax  Accuracy   Kappa    
+#   5    0.7002188  0.4367184
+#   7    0.6981368  0.4349984
+#   9    0.6927127  0.4290595
+#  11    0.7113945  0.4482685
+#  13    0.7397223  0.4789072
+#  15    0.7406060  0.4791028
+#  17    0.7470231  0.4866331
+#  19    0.7470223  0.4865025
+#  21    0.7413800  0.4787826
+#  23    0.7475759  0.4872196  
+
+
+# --------- KKNN Predict ---------
+KKNNpred_NZV <- predict(KKNNFit_NZV, newdata = testing)
+postResample(KKNNpred_NZV, testing$galaxysentiment)
+#Accuracy     Kappa 
+# 0.7517437 0.4923750 
+
+
+#########################
+## Model - galaxyRFE  ##
+########################
+
+#  -------- Feature Engineer RFE Dataset  --------
+# Let's sample the data before using RFE
+set.seed(123)
+galaxySample <- galaxy_small[sample(1:nrow(galaxy_small), 1000, replace=FALSE),]
+
+# Set up rfeControl with randomforest, repeated cross validation and no updates
+ctrl <- rfeControl(functions = rfFuncs, 
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+# Use rfe and omit the response variable (attribute 59 galaxysentiment) 
+rfeResults <- rfe(galaxySample[,1:58], 
+                  galaxySample$galaxysentiment, 
+                  sizes=(1:58), 
+                  rfeControl=ctrl)
+# Get results
+rfeResults
+
+# Plot results
+plot(rfeResults, type=c("g", "o"))
+
+# create new data set with rfe recommended features
+galaxyRFE <- galaxy_small[,predictors(rfeResults)]
+
+# add the dependent variable to galaxyRFE
+galaxyRFE$galaxysentiment <- galaxy_small$galaxysentiment
+
+# review outcome
+str(galaxyRFE)
+
+
+#  -------- Make output Factor  --------
+# Convert galaxysentiment to factor (y output)
+galaxyRFE$galaxysentiment <- as.factor(galaxyRFE$galaxysentiment)
+
+#Verify Datatypes 
+str(galaxyRFE$galaxysentiment)
+# Factor w/ 6 levels
+
+
+# -------- Configure standard seed & train, test split --------
+#set seed
+set.seed(123)
+
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(galaxyRFE$galaxysentiment, p = .7, list = FALSE)
+training <- galaxyRFE[inTraining,]
+testing <- galaxyRFE[-inTraining,]
+
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
+
+# model C5.0
+# model rf
+# model SVM
+# model kknn
+
+# --------- C5.0 Model ---------
+#train
+system.time(C5Fit_RFE <- train(galaxysentiment~., data = training, method = "C5.0", trControl=fitControl, tuneLength=2))
+# Train time = 1 min 
+
+#training results
+C5Fit_RFE
+# model  winnow  trials  Accuracy   Kappa    
+#  rules  FALSE    1      0.7671482  0.5323958
+#  rules  FALSE   10      0.7596282  0.5184707
+#  rules   TRUE    1      0.7671480  0.5328255
+#  rules   TRUE   10      0.7599596  0.5184853
+#  tree   FALSE    1      0.7643824  0.5284003
+#  tree   FALSE   10      0.7594062  0.5197680
+#  tree    TRUE    1      0.7640508  0.5280401
+#  tree    TRUE   10      0.7586323  0.5175373 
+
+
+
+# ---------  C5.0 Predict --------- 
+C5pred_RFE <- predict(C5Fit_RFE, newdata = testing)
+postResample(C5pred_RFE, testing$galaxysentiment)
+# Accuracy     Kappa 
+#0.7672436 0.5318462 
+
+#Summarize prediction
+summary(C5pred_RFE)
+#0    1    2    3    4    5 
+#399    0   18  245  134 3075 
+
+# Create a confusion matrix from random forest predictions 
+cmC5_RFE <- confusionMatrix(C5pred_RFE, testing$galaxysentiment) 
+cmC5_RFE 
+
+
+# --------- rf Model ---------
+#train
+system.time(rfFit_RFE <- train(galaxysentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 9 min 
+
+#training results
+rfFit_RFE
+# mtry  Accuracy   Kappa    
+#   2    0.7404952  0.4597028
+#   3    0.7531057  0.4960209
+#   5    0.7673758  0.5346447
+#   7    0.7657165  0.5330899
+#   9    0.7640582  0.5312673
+#  11    0.7625095  0.5293336
+#  13    0.7604076  0.5267177
+#  15    0.7596342  0.5258273
+#  17    0.7571983  0.5222160
+#  19    0.7542134  0.5173233   
+
+
+
+# --------- rf Predict --------- 
+rfpred_RFE <- predict(rfFit_RFE, newdata = testing)
+postResample(rfpred_RFE, testing$galaxysentiment)
+#Accuracy     Kappa 
+# 0.7700852 0.5374984 
+
+
+#Summarize prediction
+summary(rfpred_RFE)
+#0    1    2    3    4    5 
+#396    3   17  245  134 3076 
+
+# Create a confusion matrix from random forest predictions 
+cmRF_RFE <- confusionMatrix(rfpred_RFE, testing$galaxysentiment) 
+cmRF_RFE
+
+# --------- SVM Model ---------
+#train
+system.time(svmFit_RFE <- train(galaxysentiment~., data = training, method = "svmLinear2", trControl=fitControl, tuneLength = ))
+#Train time = 4 min 
+
+#training results
+svmFit_RFE
+# cost  Accuracy   Kappa    
+#0.25  0.6986701  0.3587956
+#0.50  0.7011046  0.3709577 * 
+#1.00  0.6977864  0.3641058   
+
+
+#--------- SVM Predict --------- 
+svmpred_RFE <- predict(svmFit_RFE, newdata = testing)
+postResample(svmpred_RFE, testing$galaxysentiment)
+#Accuracy     Kappa 
+#0.7011108 0.3675839 
+
+# --------- KKNN Model ---------
+#train
+system.time(KKNNFit_RFE <- train(galaxysentiment~., data = training, method = "kknn", trControl=fitControl, tuneLength = 10))
+#Train time = 7 min
+
+#training results
+KKNNFit_RFE
+# kmax  Accuracy   Kappa    
+#   5    0.7169241  0.4718158
+#   7    0.7319744  0.4883092
+#   9    0.7099540  0.4651352
+#  11    0.7463474  0.5047973
+#  13    0.7467901  0.5047136
+#  15    0.7418132  0.4983287
+#  17    0.7418191  0.4982270
+#  19    0.7521017  0.5101902 * 
+#  21    0.7386113  0.4950743
+#  23    0.7516594  0.5081889 
+
+
+# ----------- KKNN Predict --------- 
+KKNNpred_RFE <- predict(KKNNFit_RFE, newdata = testing)
+postResample(KKNNpred_RFE, testing$galaxysentiment)
+#Accuracy     Kappa 
+#0.7633686 0.5244483 
+
+#########################
+## Model - galaxyCOR  ##
+########################
+
+#  -------- Feature Engineer COR Dataset  --------
+# build the correlation matrix:
+#Additional resource: https://rdrr.io/cran/caret/man/findCorrelation.html
+options(max.print=1000000)
+galaxyCOR <- galaxy_small
+galaxyCOR$galaxysentiment <- as.numeric(galaxyCOR$galaxysentiment)
+str(galaxyCOR$galaxysentiment)
+corrData <- cor(galaxyCOR[,1:59])
+corrData 
+
+# Heatmap
+corrplot(corrData)
+
+# Find attributes with high correlation
+findCorrelation(corrData, cutoff = 0.9,  verbose = FALSE, names = TRUE,exact = ncol(corrData) < 100)
+#14 attributes identified
+
+#remove 14 identified attributes
+galaxyCOR$googleperneg <- NULL
+galaxyCOR$htcphone <- NULL
+galaxyCOR$ios <- NULL
+galaxyCOR$iosperneg <- NULL
+galaxyCOR$iosperunc <- NULL
+galaxyCOR$nokiacamneg <- NULL
+galaxyCOR$nokiacamunc <- NULL
+galaxyCOR$nokiadisneg <- NULL
+galaxyCOR$nokiaperneg <- NULL
+galaxyCOR$nokiaperunc <- NULL
+galaxyCOR$samsungdisneg <- NULL
+galaxyCOR$samsungdispos <- NULL
+galaxyCOR$samsungdisunc <- NULL
+galaxyCOR$sonydisneg <- NULL
+
+# -------- Make output Factor  --------
+# Convert galaxysentiment to factor (y output)
+galaxyCOR$galaxysentiment <- as.factor(galaxyCOR$galaxysentiment)
+
+#Verify Datatypes 
+str(galaxyCOR$galaxysentiment)
+# Factor w/ 6 levels
+
+# -------- Configure standard seed & train, test split --------
+#set seed
+set.seed(123)
+
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(galaxyCOR$galaxysentiment, p = .7, list = FALSE)
+training <- galaxyCOR[inTraining,]
+testing <- galaxyCOR[-inTraining,]
+
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
+
+# model C5.0
+# model rf
+# model SVM
+# model kknn
+
+# --------- C5.0 Model ---------
+#train
+system.time(C5Fit_COR <- train(galaxysentiment~., data = training, method = "C5.0", trControl=fitControl, tuneLength=2))
+# Train time = 1 min
+
+#training results
+C5Fit_COR
+# model  winnow  trials  Accuracy   Kappa    
+#  rules  FALSE    1      0.7659319  0.5300332
+#  rules  FALSE   10      0.7596297  0.5192582
+#  rules   TRUE    1      0.7659329  0.5311169 * 
+#  rules   TRUE   10      0.7597372  0.5187294
+#  tree   FALSE    1      0.7643839  0.5280731
+#  tree   FALSE   10      0.7596267  0.5195423
+#  tree    TRUE    1      0.7653793  0.5303071
+#  tree    TRUE   10      0.7571942  0.5145836  
+
+
+# ---------  C5.0 Predict --------- 
+C5pred_COR <- predict(C5Fit_COR, newdata = testing)
+postResample(C5pred_COR, testing$galaxysentiment)
+# Accuracy     Kappa 
+# 0.7672436 0.5332168 
+
+#Summarize prediction
+summary(C5pred_COR)
+# 1    2    3    4    5    6 
+# 395    0   18  252  142 3064 
+
+# Create a confusion matrix from random forest predictions 
+cmC5_COR <- confusionMatrix(C5pred_COR, testing$galaxysentiment) 
+cmC5_COR 
+
+
+# --------- rf Model ---------
+#train
+system.time(rfFit_COR <- train(galaxysentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 23
+
+#training results
+rfFit_COR
+# mtry  Accuracy   Kappa    
+#   2    0.6983482  0.3336167
+#   6    0.7550972  0.4989005
+#  11    0.7673758  0.5339208 * 
+#  16    0.7657176  0.5321691
+#  20    0.7646102  0.5307374
+#  25    0.7627294  0.5284910
+#  30    0.7599648  0.5239952
+#  34    0.7585252  0.5219211
+#  39    0.7558699  0.5182477
+#  44    0.7535502  0.5148285
+
+# --------- rf Predict --------- 
+rfpred_COR <- predict(rfFit_COR, newdata = testing)
+postResample(rfpred_COR, testing$galaxysentiment)
+#Accuracy     Kappa 
+#0.7708602 0.5396752 
+
+#Summarize prediction
+summary(rfpred_COR)
+# 1    2    3    4    5    6 
+#394    2   18  249  137 3071 
+
+# Create a confusion matrix from random forest predictions 
+cmRF_COR <- confusionMatrix(rfpred_COR, testing$galaxysentiment) 
+cmRF_COR
+
+
+# --------- SVM Model ---------
+#train
+system.time(svmFit_COR <- train(galaxysentiment~., data = training, method = "svmLinear2", trControl=fitControl, tuneLength = ))
+#Train time = 4 min 
+
+
+#training results
+svmFit_COR
+#cost  Accuracy   Kappa    
+#0.25  0.6945776  0.3368750
+#0.50  0.6975631  0.3436084
+#1.00  0.6996686  0.3489856 *
+
+
+#--------- SVM Predict --------- 
+svmpred_COR <- predict(svmFit_COR, newdata = testing)
+postResample(svmpred_COR, testing$galaxysentiment)
+#Accuracy     Kappa 
+#0.7005942 0.3511878 
+
+
+# --------- KKNN Model ---------
+#train
+system.time(KKNNFit_COR <- train(galaxysentiment~., data = training, method = "kknn", trControl=fitControl, tuneLength = 10))
+#Train time =  6 min
+
+#training results
+KKNNFit_COR
+# kmax  Accuracy   Kappa    
+#  5    0.6571897  0.4062916
+#  7    0.7330799  0.4882086
+#  9    0.7112799  0.4661191
+# 11    0.7549773  0.5157760
+# 13    0.7554181  0.5151126
+# 15    0.7582948  0.5189505
+# 17    0.7575216  0.5177437
+# 19    0.7588484  0.5181292
+# 21    0.7599529  0.5197823
+# 23    0.7596213  0.5193467
+
+# ----------- KKNN Predict --------- 
+KKNNpred_COR <- predict(KKNNFit_COR, newdata = testing)
+postResample(KKNNpred_COR, testing$galaxysentiment)
+#Accuracy     Kappa 
+#0.7615603 0.5224966 
+
+
+#########################
+## Feature Engineering ## 
+#########################
+
+# create a new dataset that will be used for recoding sentiment
+galaxyRC <- galaxy_small
+
+# recode sentiment to combine factor levels 0 & 1 and 4 & 5
+galaxyRC$galaxysentiment <- recode(galaxyRC$galaxysentiment, '0' = 1, '1' = 1, '2' = 2, '3' = 3, '4' = 4, '5' = 4) 
+
+# inspect results
+summary(galaxyRC)
+str(galaxyRC)
+
+# make galaxysentiment a factor
+galaxyRC$galaxysentiment <- as.factor(galaxyRC$galaxysentiment)
+
+#Verify Datatypes 
+str(galaxyRC$galaxysentiment)
+# Factor w/ 4 levels
+
+#Now we will test our recoded dataset using our best model
+# --------- rf Model ---------
+#set seed
+set.seed(123)
+
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(galaxyRC$galaxysentiment, p = .7, list = FALSE)
+training <- galaxyRC[inTraining,]
+testing <- galaxyRC[-inTraining,]
+
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
+#train 
+system.time(rfFit_RC <- train(galaxysentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 33 min
+
+#training results
+rfFit_RC
+# mtry  Accuracy   Kappa    
+#  2    0.7870394  0.3720600
+#  8    0.8364851  0.5647263
+# 14    0.8448956  0.5954312 * 
+# 20    0.8445648  0.5953898
+# 26    0.8432368  0.5931336
+# 33    0.8414669  0.5894685
+# 39    0.8408040  0.5882702
+# 45    0.8394751  0.5858614
+# 51    0.8394745  0.5860141
+# 58    0.8375938  0.5824368
+
+
+# --------- rf Predict --------- 
+rfpred_RC <- predict(rfFit_RC, newdata = testing)
+postResample(rfpred_RC, testing$galaxysentiment)
+#Accuracy     Kappa 
+# 0.8494318 0.6082993 
+
+#Summarize prediction
+summary(rfpred_RC)
+#  1    2    3    4 
+# 408   20  224 3220 
+
+# Create a confusion matrix from random forest predictions 
+cmRF_RC <- confusionMatrix(rfpred_RC, testing$galaxysentiment) 
+cmRF_RC
+
+#          Reference
+#Prediction        1    2    3    4
+#              1  367    4    4   33
+#              2    1   17    0    2
+#             3    3    1  199   21
+#             4  252  113  149 2706
+
+
+# ---------  Principal Component Analysis --------- 
+
+# data = training and testing from galaxyDF (no feature selection) 
+# create object containing centered, scaled PCA components from training set
+# excluded the dependent variable and set threshold to .95
+training <- galaxy_small
+preprocessParams <- preProcess(training[,-59], method=c("center", "scale", "pca"), thresh = 0.95)
+print(preprocessParams)
+
+# use predict to apply pca parameters, create training, exclude dependant
+train.pca <- predict(preprocessParams, training[,-59])
+
+# add the dependent to training
+train.pca$galaxysentiment <- training$galaxysentiment
+
+# use predict to apply pca parameters, create testing, exclude dependant
+test.pca <- predict(preprocessParams, testing[,-59])
+
+# add the dependent to training
+test.pca$galaxysentiment <- testing$galaxysentiment
+
+# inspect results
+str(train.pca)
+str(test.pca)
+
+#Now we will test our recoded dataset using our best model
+# --------- rf Model ---------
+
+#train 
+system.time(rfFit_PCA <- train(galaxysentiment~., data = train.pca, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 21
+
+#training results
+rfFit_PCA
+# mtry  Accuracy   Kappa    
+#  2    0.7574977  0.5166776
+#  4    0.7580399  0.5177105
+#  7    0.7581171  0.5180658
+#  9    0.7581947  0.5185479
+# 12    0.7586592  0.5199242
+# 14    0.7583495  0.5193098
+# 17    0.7580397  0.5186426
+# 19    0.7583498  0.5195938
+# 22    0.7580393  0.5190133
+# 25    0.7564130  0.5158457
+
+
+
+# --------- rf Predict --------- 
+rfpred_PCA <- predict(rfFit_PCA, newdata = test.pca)
+postResample(rfpred_PCA, test.pca$galaxysentiment)
+#Accuracy     Kappa 
+#0.9488753 0.9148374
+
+#Summarize prediction
+summary(rfpred_PCA)
+#  0    1    2    3    4    5 
+# 415   16   42  248  183 2968
+
+# Create a confusion matrix from random forest predictions 
+cmRF_PCA <- confusionMatrix(rfpred_PCA, test.pca$galaxysentiment) 
+cmRF_PCA
+
+#################################
+## Apply Model to Large Matrix ## 
+#################################
+
+# drop ID variable
+galaxy_large$id<- NULL
+
+# Convert galaxysentiment to factor (y output)
+galaxy_large$galaxysentiment <- as.factor(galaxy_large$galaxysentiment)
+
+# --------- rf Predict --------- 
+rfpred_LG <- predict(rfFit_RC, galaxy_large)
+rfpred_LG
+
+#Summarize prediction
+summary(rfpred_LG)
+# 1     2     3     4 
+# 9905  699 1238 9340 
+
+########################
+## Export Predictions ## 
+########################
+
+galaxy_largematrixoutput <- galaxy_large
+galaxy_largematrixoutput$galaxysentiment<- rfpred_LG
+write.csv(galaxy_largematrixoutput, file="/Users/monikaspreitzer/Desktop/Data\ Analyst/Course\ 5/Spreitzer_C5T3/galaxy_sentiment_analysis/galaxy_largematrixoutput.csv", row.names = TRUE)
