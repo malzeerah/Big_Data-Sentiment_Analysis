@@ -1,12 +1,17 @@
 ########################
 ## Load Packages & Data ## 
 ########################
+#install.packages("kknn")
 library(readr)
 library(doParallel)
 library(plotly)
 library(caret)
 library(ggplot2)
 library(corrplot)
+library(kknn)
+library(e1071)
+library(dplyr)
+library(C50)
 
 
 ## Import data
@@ -26,23 +31,16 @@ cl <- makeCluster(2)
 registerDoParallel(cl)
 # Confirm how many cores are now "assigned" to R and RStudio
 getDoParWorkers() # Result 2 
-# Stop Cluster. After peorming your tasks, stop your cluster. 
-stopCluster(cl)
+# Stop Cluster. After performing your tasks, stop your cluster. 
+#stopCluster(cl)
 
-#############################
-## Pre-processing/Cleaning ## 
-#############################
+##############
+##   EDA    ##
+##############
 
 ## Inspect data types
 str(iphone_small)
 # Iphone df contains -- 12,973 observations & -- 59 variables
-
-# Convert iphonesentiment to factor (y output)
-iphone_small$iphonesentiment <- as.factor(iphone_small$iphonesentiment)
-
-#Verify Datatypes 
-str(iphone_small$iphonesentiment)
-# Factor w/ 6 levels
 
 # Min, Med, Mean, Max
 summary(iphone_small)
@@ -56,13 +54,8 @@ names(iphone_small)
 #Will print out the instances within that particular column in your data set.
 iphone_small$iphonesentiment 
 
-
 # Missing values? 
 is.na(iphone_small) #omitted 0 rows
-
-##############
-##   EDA    ##
-##############
 
 # Histogram
 plot_ly(iphone_small, x= ~iphone_small$iphonesentiment, type='histogram')
@@ -76,16 +69,807 @@ plot_ly(iphone_small, x= ~iphone_small$iphonesentiment, type='histogram')
 # 5: very positive
 
 
-################
-##    Model   ##
-################
+###############################
+## Model - Orignal Data Set  ##
+###############################
+
+#  ----- Make output Factor  -----
+# Convert iphonesentiment to factor (y output)
+iphone_small$iphonesentiment <- as.factor(iphone_small$iphonesentiment)
+
+#Verify Datatypes 
+str(iphone_small$iphonesentiment)
+
+# -------- Configure standard seed & train, test split --------
+#set seed
+set.seed(123)
+
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(iphone_small$iphonesentiment, p = .7, list = FALSE)
+training <- iphone_small[inTraining,]
+testing <- iphone_small[-inTraining,]
+
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
+
+# Factor w/ 6 levels
+# model C5.0
+# model rf
+# model SVM
+# model kknn
+
+# --------- C5.0 Model ---------
+#train 
+system.time(C5Fit <- train(iphonesentiment~., data = training, method = "C5.0", trControl=fitControl, tuneLength=2))
+# Train time = 1 minute
+#training results
+C5Fit
+#model  winnow  trials  Accuracy   Kappa    
+# rules  FALSE    1      0.7715488  0.5560659
+# rules  FALSE   10      0.7657136  0.5483050
+# rules   TRUE    1      0.7730903  0.5595926 * 
+# rules   TRUE   10      0.7658237  0.5491214
+# tree   FALSE    1      0.7716584  0.5572428
+# tree   FALSE   10      0.7649415  0.5481004
+# tree    TRUE    1      0.7728698  0.5593733
+# tree    TRUE   10      0.7652724  0.5488644
+
+# ---------  C5.0 Predict --------- 
+C5pred <- predict(C5Fit, newdata = testing)
+postResample(C5pred, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.7724936 0.5558736 
+
+#Summarize prediction
+summary(C5pred)
+
+# Create a confusion matrix from random forest predictions 
+cmC5 <- confusionMatrix(C5pred, testing$iphonesentiment) 
+cmC5
+
+
+# --------- rf Model ---------
+#train 
+system.time(rfFit <- train(iphonesentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 34 minutes (10 mtry)
+
+#training results
+rfFit
+# mtry  Accuracy   Kappa    
+# 2    0.7010889  0.373253
+# 8    0.7760628  0.564246 * 
+# 14    0.7759523  0.565628
+# 20    0.7751819  0.564992
+# 26    0.7741914  0.564491
+# 33    0.7709993  0.559871
+# 39    0.7686881  0.556595
+# 45    0.7670356  0.554089
+# 51    0.7657146  0.552470
+# 58    0.7638432  0.5496112
+
+# --------- rf Predict --------- 
+rfpred <- predict(rfFit, newdata = testing)
+postResample(rfpred, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.7722365 0.5546253 
+
+#Summarize prediction
+summary(rfpred)
+
+# Create a confusion matrix from random forest predictions 
+cmRF <- confusionMatrix(rfpred, testing$iphonesentiment) 
+cmRF
+
+# --------- SVM Model ---------
+#train 
+system.time(svmFit <- train(iphonesentiment~., data = training, method = "svmLinear2", trControl=fitControl, tuneLength = 5))
+#Train time = 9 min
+
+#training results
+svmFit
+#cost  Accuracy   Kappa    
+#0.25  0.7070351  0.4036380
+#0.50  0.7100054  0.4143850 * 
+#1.00  0.7092351  0.4138246
+#2.00  0.7087944  0.4125474
+#4.00  0.7073621  0.4090776
+
+# --------- SVM Predict --------- 
+svmpred <- predict(svmFit, newdata = testing)
+postResample(svmpred, testing$iphonesentiment)
+#Accuracy   Kappa 
+#0.7120823 0.4200502 
+
+
+# --------- KKNN Model ---------
+#train 
+system.time(KKNNFit <- train(iphonesentiment~., data = training, method = "kknn", trControl=fitControl, tuneLength = 5))
+#Train time = 19 min
+
+#training results
+KKNNFit
+#kmax  Accuracy   Kappa    
+#5    0.3081559  0.1537502
+#7    0.3208168  0.1590551
+#9    0.3284145  0.1616207
+#11    0.3383224  0.1670588
+#13    0.3428372  0.1694338 * 
+
+#--------- KKNN Predict --------- 
+KKNNpred <- predict(KKNNFit, newdata = testing)
+postResample(KKNNpred, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.3498715 0.1751152 
+
+#########################
+## Model - iphoneNZV  ##
+########################
+
+#  ----- Feature Engineer NZV Dataset  -----
+#nearZeroVar() with saveMetrics = TRUE returns an object containing a table including: frequency ratio, percentage unique, zero variance and near zero variance 
+nzvMetrics <- nearZeroVar(iphone_small, saveMetrics = TRUE)
+nzvMetrics
+
+# nearZeroVar() with saveMetrics = FALSE returns an vector 
+nzv <- nearZeroVar(iphone_small, saveMetrics = FALSE) 
+nzv
+
+# create a new data set and remove near zero variance features
+iphoneNZV <- iphone_small[,-nzv]
+str(iphoneNZV)
+
+#  ----- Make output Factor  -----
+# Convert iphonesentiment to factor (y output)
+iphoneNZV$iphonesentiment <- as.factor(iphoneNZV$iphonesentiment)
+
+#Verify Datatypes 
+str(iphoneNZV$iphonesentiment)
+# Factor w/ 6 levels
+
+# -------- Configure standard seed & train, test split --------
+#set seed
+set.seed(123)
+
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(iphoneNZV$iphonesentiment, p = .7, list = FALSE)
+training <- iphoneNZV[inTraining,]
+testing <- iphoneNZV[-inTraining,]
+
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
 
 # model C5.0
 # model rf
 # model SVM
 # model kknn
-# model gmb
 
+#--------- C5.0 Model ---------
+#train 
+system.time(C5Fit_NZV <- train(iphonesentiment~., data = training, method = "C5.0", trControl=fitControl, tuneLength=2))
+# Train time = 1 min 
+
+#training results
+C5Fit_NZV
+#model  winnow  trials  Accuracy   Kappa    
+# rules  FALSE    1      0.7553647  0.5189553
+# rules  FALSE   10      0.7464488  0.5048439
+# rules   TRUE    1      0.7547041  0.5178199
+# rules   TRUE   10      0.7435869  0.4969653
+# tree   FALSE    1      0.7556945  0.5204503 * 
+# tree   FALSE   10      0.7484277  0.5082650
+# tree    TRUE    1      0.7541523  0.5173250
+# tree    TRUE   10      0.7446845  0.5006688
+
+# ---------  C5.0 Predict --------- 
+C5pred_NZV <- predict(C5Fit_NZV, newdata = testing)
+postResample(C5pred_NZV, testing$iphonesentiment)
+# Accuracy     Kappa 
+# 0.7555270 0.5196516 
+
+#Summarize prediction
+summary(C5pred_NZV)
+
+# Create a confusion matrix from random forest predictions 
+cmC5_NZV <- confusionMatrix(C5pred_NZV, testing$iphonesentiment) 
+cmC5_NZV 
+
+# --------- rf Model ---------
+
+#train
+system.time(rfFit_NZV <- train(iphonesentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 5 min
+
+#training results
+rfFit_NZV
+# mtry  Accuracy   Kappa    
+#  2    0.7592180  0.5260506
+#  3    0.7596589  0.5288835
+#  4    0.7588886  0.5288805
+#  5    0.7574572  0.5272701
+#  6    0.7556957  0.5249923
+#  7    0.7542646  0.5232586
+#  8    0.7515125  0.5189943
+#  9    0.7503016  0.5172786
+# 10    0.7489795  0.5155350
+# 11    0.7475483  0.5137819
+
+
+# --------- rf Predict --------- 
+rfpred_NZV <- predict(rfFit_NZV, newdata = testing)
+postResample(rfpred_NZV, testing$iphonesentiment)
+#Accuracy     Kappa 
+# 0.7586118 0.5246686 
+
+#Summarize prediction
+summary(rfpred_NZV)
+
+# Create a confusion matrix from random forest predictions 
+rfC5_NZV <- confusionMatrix(rfpred_NZV, testing$iphonesentiment) 
+rfC5_NZV 
+
+# --------- SVM Model ---------
+
+#train
+system.time(svmFit_NZV <- train(iphonesentiment~., data = training, method = "svmLinear2", trControl=fitControl, tuneLength = ))
+#Train time = 15
+
+#training results
+svmFit_NZV
+#cost  Accuracy   Kappa    
+#0.25  0.6725704  0.3224874
+#0.50  0.6738921  0.3253916
+#1.00  0.6826990  0.3444155 * 
+#2.00  0.6824789  0.3439800
+#4.00  0.6824789  0.3440322
+
+# --------- SVM Predict --------- 
+svmpred_NZV <- predict(svmFit_NZV, newdata = testing)
+postResample(svmpred_NZV, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.6871465 0.3548189 
+
+
+# --------- KKNN Model ---------
+#train
+system.time(KKNNFit_NZV <- train(iphonesentiment~., data = training, method = "kknn", trControl=fitControl, tuneLength = 10))
+#Train time = 5 min 
+
+#training results
+KKNNFit_NZV
+#kmax  Accuracy   Kappa    
+#5    0.2920839  0.1262480
+#7    0.3047438  0.1337897
+#9    0.3115702  0.1371954
+#11    0.3171854  0.1387808
+#13    0.3253330  0.1433783
+#15    0.3312767  0.1468584
+#17    0.3351316  0.1478278
+#19    0.3382126  0.1494201
+#21    0.3465809  0.1543654
+#23    0.3572610  0.1615007
+
+# --------- KKNN Predict ---------
+KKNNpred_NZV <- predict(KKNNFit_NZV, newdata = testing)
+postResample(KKNNpred_NZV, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.3562982 0.1625970
+
+
+#########################
+## Model - iphoneRFE  ##
+########################
+
+#  -------- Feature Engineer RFE Dataset  --------
+# Let's sample the data before using RFE
+set.seed(123)
+iphoneSample <- iphone_small[sample(1:nrow(iphone_small), 1000, replace=FALSE),]
+
+# Set up rfeControl with randomforest, repeated cross validation and no updates
+ctrl <- rfeControl(functions = rfFuncs, 
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+# Use rfe and omit the response variable (attribute 59 iphonesentiment) 
+rfeResults <- rfe(iphoneSample[,1:58], 
+                  iphoneSample$iphonesentiment, 
+                  sizes=(1:58), 
+                  rfeControl=ctrl)
+# Get results
+rfeResults
+
+# Plot results
+plot(rfeResults, type=c("g", "o"))
+
+# create new data set with rfe recommended features
+iphoneRFE <- iphone_small[,predictors(rfeResults)]
+
+# add the dependent variable to iphoneRFE
+iphoneRFE$iphonesentiment <- iphone_small$iphonesentiment
+
+# review outcome
+str(iphoneRFE)
+
+
+#  -------- Make output Factor  --------
+# Convert iphonesentiment to factor (y output)
+iphoneRFE$iphonesentiment <- as.factor(iphoneRFE$iphonesentiment)
+
+#Verify Datatypes 
+str(iphoneRFE$iphonesentiment)
+# Factor w/ 6 levels
+
+# -------- Configure standard seed & train, test split --------
+#set seed
 set.seed(123)
 
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(iphoneRFE$iphonesentiment, p = .7, list = FALSE)
+training <- iphoneRFE[inTraining,]
+testing <- iphoneRFE[-inTraining,]
 
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
+
+# model C5.0
+# model rf
+# model SVM
+# model kknn
+
+# --------- C5.0 Model ---------
+#train
+system.time(C5Fit_RFE <- train(iphonesentiment~., data = training, method = "C5.0", trControl=fitControl, tuneLength=2))
+# Train time = 1
+
+#training results
+C5Fit_RFE
+# model  winnow  trials  Accuracy   Kappa    
+# rules  FALSE    1      0.7720996  0.5570114
+# rules  FALSE   10      0.7662638  0.5497015
+# rules   TRUE    1      0.7726496  0.5582737 * 
+# rules   TRUE   10      0.7670348  0.5509116
+# tree   FALSE    1      0.7709976  0.5558195
+# tree   FALSE   10      0.7640625  0.5468954
+# tree    TRUE    1      0.7716585  0.5569809
+# tree    TRUE   10      0.7640613  0.5465082  
+
+
+# ---------  C5.0 Predict --------- 
+C5pred_RFE <- predict(C5Fit_RFE, newdata = testing)
+postResample(C5pred_RFE, testing$iphonesentiment)
+# Accuracy     Kappa 
+#0.7706941 0.5521643 
+
+#Summarize prediction
+summary(C5pred_RFE)
+
+# Create a confusion matrix from random forest predictions 
+cmC5_RFE <- confusionMatrix(C5pred_RFE, testing$iphonesentiment) 
+cmC5_RFE 
+
+
+# --------- rf Model ---------
+#train
+system.time(rfFit_RFE <- train(iphonesentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 8
+
+#training results
+rfFit_RFE
+# mtry  Accuracy   Kappa    
+#  2    0.7383047  0.4712607
+#  3    0.7711152  0.5545843
+#  5    0.7765075  0.5677032 * 
+#  7    0.7758484  0.5673012
+#  9    0.7738656  0.5649574
+# 10    0.7721045  0.5626309
+# 12    0.7688015  0.5577856
+# 14    0.7660492  0.5533848
+# 16    0.7639563  0.5505048
+# 18    0.7630761  0.5501380  
+
+
+# --------- rf Predict --------- 
+rfpred_RFE <- predict(rfFit_RFE, newdata = testing)
+postResample(rfpred_RFE, testing$iphonesentiment)
+#Accuracy     Kappa 
+# 0.7750643 0.5623284
+
+
+#Summarize prediction
+summary(rfpred_RFE)
+
+# Create a confusion matrix from random forest predictions 
+cmRF_RFE <- confusionMatrix(rfpred_RFE, testing$iphonesentiment) 
+cmRF_RFE
+
+# --------- SVM Model ---------
+#train
+system.time(svmFit_RFE <- train(iphonesentiment~., data = training, method = "svmLinear2", trControl=fitControl, tuneLength = ))
+#Train time = 2 min
+
+#training results
+svmFit_RFE
+#cost  Accuracy   Kappa    
+#0.25  0.7022981  0.3966035
+#0.50  0.7058188  0.4066788 * 
+#1.00  0.7053787  0.4078614
+
+#--------- SVM Predict --------- 
+svmpred_RFE <- predict(svmFit_RFE, newdata = testing)
+postResample(svmpred_RFE, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.7095116 0.4160678 
+
+# --------- KKNN Model ---------
+#train
+system.time(KKNNFit_RFE <- train(iphonesentiment~., data = training, method = "kknn", trControl=fitControl, tuneLength = 10))
+#Train time = 5 min
+
+#training results
+KKNNFit_RFE
+# kmax  Accuracy   Kappa    
+#  5    0.3187281  0.1611226
+#  7    0.3256657  0.1627942
+#  9    0.3326007  0.1655196
+# 11    0.3414080  0.1692921
+# 13    0.3465832  0.1716254
+# 15    0.3488951  0.1709572
+# 17    0.3544009  0.1741620
+# 19    0.3595778  0.1764849
+# 21    0.3643128  0.1800167
+# 23    0.3721294  0.1840548 * 
+
+# ----------- KKNN Predict --------- 
+KKNNpred_RFE <- predict(KKNNFit_RFE, newdata = testing)
+postResample(KKNNpred_RFE, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.3727506 0.1899502 
+
+#########################
+## Model - iphoneCOR  ##
+########################
+
+#  -------- Feature Engineer COR Dataset  --------
+# build the correlation matrix:
+#Additional resource: https://rdrr.io/cran/caret/man/findCorrelation.html
+options(max.print=1000000)
+iphoneCOR <- iphone_small
+iphoneCOR$iphonesentiment <- as.numeric(iphoneCOR$iphonesentiment)
+str(iphoneCOR$iphonesentiment)
+corrData <- cor(iphoneCOR[,1:59])
+corrData 
+
+# Heatmap
+corrplot(corrData)
+
+# Find attributes with high correlation
+findCorrelation(corrData, cutoff = 0.9,  verbose = FALSE, names = TRUE,exact = ncol(corrData) < 100)
+#13 attributes identified
+
+#remove 13 identified attributes
+iphoneCOR$googleperneg <- NULL
+iphoneCOR$htcphone <- NULL
+iphoneCOR$ios <- NULL
+iphoneCOR$iosperneg <- NULL
+iphoneCOR$iosperunc <- NULL
+iphoneCOR$nokiacamneg <- NULL
+iphoneCOR$nokiacamunc <- NULL
+iphoneCOR$nokiadisneg <- NULL
+iphoneCOR$nokiaperneg <- NULL
+iphoneCOR$nokiaperunc <- NULL
+iphoneCOR$samsungdisneg <- NULL
+iphoneCOR$samsungdispos <- NULL
+iphoneCOR$samsungdisunc <- NULL
+
+# -------- Make output Factor  --------
+# Convert iphonesentiment to factor (y output)
+iphoneCOR$iphonesentiment <- as.factor(iphoneCOR$iphonesentiment)
+
+#Verify Datatypes 
+str(iphoneCOR$iphonesentiment)
+# Factor w/ 6 levels
+
+# -------- Configure standard seed & train, test split --------
+#set seed
+set.seed(123)
+
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(iphoneCOR$iphonesentiment, p = .7, list = FALSE)
+training <- iphoneCOR[inTraining,]
+testing <- iphoneCOR[-inTraining,]
+
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
+
+# model C5.0
+# model rf
+# model SVM
+# model kknn
+
+# --------- C5.0 Model ---------
+#train
+system.time(C5Fit_COR <- train(iphonesentiment~., data = training, method = "C5.0", trControl=fitControl, tuneLength=2))
+# Train time = 1 min
+
+#training results
+C5Fit_COR
+#model  winnow  trials  Accuracy   Kappa    
+# model  winnow  trials  Accuracy   Kappa    
+# rules  FALSE    1      0.7731999  0.5592741
+# rules  FALSE   10      0.7660431  0.5488893
+# rules   TRUE    1      0.7735309  0.5600407 * 
+# rules   TRUE   10      0.7640609  0.5460979
+# tree   FALSE    1      0.7717680  0.5573661
+# tree   FALSE   10      0.7654930  0.5490227
+# tree    TRUE    1      0.7725398  0.5585951
+# tree    TRUE   10      0.7647215  0.5480796
+
+# ---------  C5.0 Predict --------- 
+C5pred_COR <- predict(C5Fit_COR, newdata = testing)
+postResample(C5pred_COR, testing$iphonesentiment)
+# Accuracy     Kappa 
+#0.7719794 0.5544451 
+
+#Summarize prediction
+summary(C5pred_COR)
+
+# Create a confusion matrix from random forest predictions 
+cmC5_COR <- confusionMatrix(C5pred_COR, testing$iphonesentiment) 
+cmC5_COR 
+
+
+# --------- rf Model ---------
+#train
+system.time(rfFit_COR <- train(iphonesentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 22 min 
+
+#training results
+rfFit_COR
+# mtry  Accuracy   Kappa    
+#  mtry  Accuracy   Kappa    
+#  2    0.6927275  0.3490324
+#  6    0.7750763  0.5619134
+# 11    0.7759571  0.5661568 *
+# 16    0.7751867  0.5653835
+# 21    0.7726539  0.5622636
+# 25    0.7700123  0.5582729
+# 30    0.7671499  0.5541750
+# 35    0.7648371  0.5510356
+# 40    0.7621955  0.5472598
+# 45    0.7605422  0.5451292
+
+# --------- rf Predict --------- 
+rfpred_COR <- predict(rfFit_COR, newdata = testing)
+postResample(rfpred_COR, testing$iphonesentiment)
+#Accuracy     Kappa 
+# 0.7735219 0.5586538 
+
+#Summarize prediction
+summary(rfpred_COR)
+
+# Create a confusion matrix from random forest predictions 
+cmRF_COR <- confusionMatrix(rfpred_COR, testing$iphonesentiment) 
+cmRF_COR
+
+
+# --------- SVM Model ---------
+#train
+system.time(svmFit_COR <- train(iphonesentiment~., data = training, method = "svmLinear2", trControl=fitControl, tuneLength = ))
+#Train time = 3 min 
+
+#training results
+svmFit_COR
+#Accuracy     Kappa 
+#cost  Accuracy   Kappa    
+#0.25  0.6951511  0.3690586
+#0.50  0.6975744  0.3743969
+#1.00  0.7038503  0.3902788
+
+#--------- SVM Predict --------- 
+svmpred_COR <- predict(svmFit_COR, newdata = testing)
+postResample(svmpred_COR, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.7012853  0.3823634
+
+
+# --------- KKNN Model ---------
+#train
+system.time(KKNNFit_COR <- train(iphonesentiment~., data = training, method = "kknn", trControl=fitControl, tuneLength = 10))
+#Train time = 6 min 
+
+#training results
+KKNNFit_COR
+#Accuracy     Kappa 
+# kmax  Accuracy   Kappa    
+#  5    0.3090414  0.1542095
+#  7    0.3187306  0.1587503
+#  9    0.3273196  0.1619231
+# 11    0.3362355  0.1660603
+# 13    0.3421807  0.1686656
+# 15    0.3444932  0.1696714
+# 17    0.3485648  0.1717824
+# 19    0.3547341  0.1753319
+# 21    0.3590281  0.1780513
+# 23    0.3607902  0.1787262 * 
+
+# ----------- KKNN Predict --------- 
+KKNNpred_COR <- predict(KKNNFit_COR, newdata = testing)
+postResample(KKNNpred_COR, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.3678663  0.1854261
+
+
+#########################
+## Feature Engineering ## 
+#########################
+
+# create a new dataset that will be used for recoding sentiment
+iphoneRC <- iphone_small
+
+# recode sentiment to combine factor levels 0 & 1 and 4 & 5
+iphoneRC$iphonesentiment <- recode(iphoneRC$iphonesentiment, '0' = 1, '1' = 1, '2' = 2, '3' = 3, '4' = 4, '5' = 4) 
+
+# inspect results
+summary(iphoneRC)
+str(iphoneRC)
+
+# make iphonesentiment a factor
+iphoneRC$iphonesentiment <- as.factor(iphoneRC$iphonesentiment)
+
+#Verify Datatypes 
+str(iphoneRC$iphonesentiment)
+# Factor w/ 4 levels
+
+#Now we will test our translated dataset using our best model
+# --------- rf Model ---------
+#set seed
+set.seed(123)
+
+# define an 70%/30% train/test split of the dataset
+inTraining <- createDataPartition(iphoneRC$iphonesentiment, p = .7, list = FALSE)
+training <- iphoneRC[inTraining,]
+testing <- iphoneRC[-inTraining,]
+
+#10 fold cross validation
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 1)
+
+#train 
+system.time(rfFit_RC <- train(iphonesentiment~., data = training, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 32
+
+#training results
+rfFit_RC
+
+#m try  Accuracy   Kappa    
+#   2    0.7754012  0.3681232
+#   8    0.8406907  0.5951720
+#  14    0.8505984  0.6266547
+#  20    0.8515898  0.6298255 * 
+#  26    0.8503790  0.6279074
+#  33    0.8487278  0.6254052
+#  39    0.8482879  0.6253218
+#  45    0.8469665  0.6229462
+#  51    0.8456458  0.6204053
+#  58    0.8435540  0.6167291
+
+# --------- rf Predict --------- 
+rfpred_RC <- predict(rfFit_RC, newdata = testing)
+postResample(rfpred_RC, testing$iphonesentiment)
+#Accuracy     Kappa 
+#0.8488432 0.6244766 
+
+#Summarize prediction
+summary(rfpred_RC)
+
+# Create a confusion matrix from random forest predictions 
+cmRF_RC <- confusionMatrix(rfpred_RC, testing$iphonesentiment) 
+cmRF_RC
+
+#          Reference
+#Prediction    1      2      3       4
+#         1   391 -   2   -  1  -   16
+#         2   0   -  12   -  0  -    0
+#         3   2   -  2    - 235 -   13
+#         4   312 - 120   - 120 -   2664
+
+
+# ---------  Principal Component Analysis --------- 
+
+# data = training and testing from iphoneDF (no feature selection) 
+# create object containing centered, scaled PCA components from training set
+# excluded the dependent variable and set threshold to .95
+training <- iphone_small
+preprocessParams <- preProcess(training[,-59], method=c("center", "scale", "pca"), thresh = 0.95)
+print(preprocessParams)
+
+# use predict to apply pca parameters, create training, exclude dependant
+train.pca <- predict(preprocessParams, training[,-59])
+
+# add the dependent to training
+train.pca$iphonesentiment <- training$iphonesentiment
+
+# use predict to apply pca parameters, create testing, exclude dependant
+test.pca <- predict(preprocessParams, testing[,-59])
+
+# add the dependent to training
+test.pca$iphonesentiment <- testing$iphonesentiment
+
+# inspect results
+str(train.pca)
+str(test.pca)
+
+#Now we will test our recoded dataset using our best model
+# --------- rf Model ---------
+
+#train 
+system.time(rfFit_PCA <- train(iphonesentiment~., data = train.pca, method = "rf", trControl=fitControl, tuneLength = 10))
+#Train time = 21 minute
+
+#training results
+rfFit_PCA
+#mtry  Accuracy   Kappa    
+#  2    0.7629683  0.5443144
+#  4    0.7628913  0.5445178
+#  7    0.7622746  0.5438345
+#  9    0.7628910  0.5447582
+# 12    0.7629682  0.5453416
+# 14    0.7630455  0.5454053
+# 17    0.7630455  0.5451364
+# 19    0.7615809  0.5428328
+# 22    0.7620427  0.5436630
+# 25    0.7615031  0.5426700
+
+# --------- rf Predict --------- 
+rfpred_PCA <- predict(rfFit_PCA, newdata = test.pca)
+postResample(rfpred_PCA, test.pca$iphonesentiment)
+#Accuracy     Kappa 
+#0.8154242 0.6513901
+
+#Summarize prediction
+summary(rfpred_PCA)
+
+# Create a confusion matrix from random forest predictions 
+cmRF_PCA <- confusionMatrix(rfpred_PCA, test.pca$iphonesentiment) 
+cmRF_PCA
+
+#        Reference
+#Prediction    0    1    2    3    4    5
+#          0  414    1    1    0    4    2
+#          1    0   15    0    0    0    0
+#          2    2    1   38    1    0    2
+#          3    0    0    0  255    1    0
+#          4    0    0    0    0  194    2
+#          5  172  100   97  100  232 2256
+
+
+#################################
+## Apply Model to Large Matrix ## 
+#################################
+
+# drop ID variable
+iphone_large$id<- NULL
+
+# Convert iphonesentiment to factor (y output)
+iphone_large$iphonesentiment <- as.factor(iphone_large$iphonesentiment)
+
+# --------- rf Predict --------- 
+rfpred_LG <- predict(rfFit_RC, iphone_large)
+rfpred_LG
+
+#Summarize prediction
+summary(rfpred_LG)
+# 1     2     3     4 
+# 10084   732  1392  8974 
+
+
+########################
+## Export Predictions ## 
+########################
+
+iphone_largematrixoutput <- iphone_large
+iphone_largematrixoutput$iphonesentiment<- rfpred_LG
+write.csv(iphone_largematrixoutput, file="/Users/monikaspreitzer/Desktop/Data\ Analyst/Course\ 5/Spreitzer_C5T3/iphone_largematrixoutput.csv", row.names = TRUE)
